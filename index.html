@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>漏えい通知チェッカー</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDGothic&display=swap">
+<style>
+/* Layout: one calm reading column — input, what leaked, how real is the mail, then a time-rail of actions */
+:root{
+  --bg:#f3f6f5; --surface:#ffffff; --ink:#18221f; --muted:#56655f; --line:#d5dfdb;
+  --accent:#0f6a5c; --accent-ink:#ffffff; --accent-soft:#e1f0ec;
+  --hi:#b42318; --hi-soft:#fdeceA; --mid:#995400; --mid-soft:#fff3df; --ok:#1f6b45; --ok-soft:#e5f3ea;
+  --font-body:"BIZ UDPGothic","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --font-mono:"BIZ UDGothic","Osaka-mono","MS Gothic",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1513; --surface:#18201e; --ink:#e4ece9; --muted:#9bb0a9; --line:#2b3834;
+  --accent:#5cc7b1; --accent-ink:#0c1a17; --accent-soft:#183531;
+  --hi:#ff9284; --hi-soft:#3a1c18; --mid:#f0b85e; --mid-soft:#33280f; --ok:#7fd3a3; --ok-soft:#16301f;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1513; --surface:#18201e; --ink:#e4ece9; --muted:#9bb0a9; --line:#2b3834;
+  --accent:#5cc7b1; --accent-ink:#0c1a17; --accent-soft:#183531;
+  --hi:#ff9284; --hi-soft:#3a1c18; --mid:#f0b85e; --mid-soft:#33280f; --ok:#7fd3a3; --ok-soft:#16301f;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:16px;line-height:1.75;padding-inline:16px;padding-block:24px 56px}
+.wrap{max-width:720px;margin:0 auto;display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{margin:0;text-wrap:balance;line-height:1.35}
+h1{font-size:1.75rem;letter-spacing:.02em}
+h2{font-size:1.15rem;display:flex;align-items:baseline;gap:10px}
+h2 .step{font-family:var(--font-mono);font-size:.8rem;color:var(--accent);letter-spacing:.08em}
+p{margin:0}
+.lead{color:var(--muted);max-width:60ch}
+.privacy{display:flex;gap:12px;align-items:flex-start;background:var(--accent-soft);border-radius:10px;padding:12px 14px;font-size:.92rem}
+.privacy svg{flex:none;margin-top:3px}
+section{display:flex;flex-direction:column;gap:12px}
+textarea{width:100%;min-height:220px;resize:vertical;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:inherit;font-size:.92rem;line-height:1.7;padding:12px 14px}
+textarea:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible+span{outline:3px solid var(--accent);outline-offset:2px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;font-size:.95rem;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+button.ghost{border-color:transparent;background:transparent;color:var(--muted);text-decoration:underline;padding-inline:6px}
+.note{font-size:.85rem;color:var(--muted)}
+.sample-flag{font-size:.8rem;font-weight:700;color:var(--mid);background:var(--mid-soft);border-radius:999px;padding:2px 10px}
+details{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:10px 14px;font-size:.9rem}
+summary{cursor:pointer;font-weight:700}
+details ul{margin:8px 0 2px;padding-left:1.2em;display:flex;flex-direction:column;gap:4px}
+.notice{border-radius:10px;padding:10px 14px;font-size:.9rem;background:var(--mid-soft);color:var(--ink)}
+
+.verdict{border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.verdict strong{font-size:1.05rem}
+.verdict.hi{background:var(--hi-soft)} .verdict.hi strong{color:var(--hi)}
+.verdict.mid{background:var(--mid-soft)} .verdict.mid strong{color:var(--mid)}
+.verdict.lo{background:var(--ok-soft)} .verdict.lo strong{color:var(--ok)}
+
+.groups{display:flex;flex-direction:column;gap:14px}
+.group h3{font-size:.8rem;color:var(--muted);letter-spacing:.06em;margin-bottom:6px;font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 12px;font-size:.88rem;border:1px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--ink);color:var(--ink);font-weight:700}
+.chip[aria-pressed="true"].lv-hi{border-color:var(--hi);background:var(--hi-soft);color:var(--hi)}
+.chip[aria-pressed="true"].lv-mid{border-color:var(--mid);background:var(--mid-soft);color:var(--mid)}
+.chip.neg{text-decoration:line-through;text-decoration-color:var(--muted)}
+.chip .tag{font-size:.72rem;text-decoration:none;display:inline-block;color:var(--muted);font-weight:400}
+
+.phish{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.phish ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px}
+.host{font-family:var(--font-mono);font-size:.95rem;background:var(--bg);border-radius:6px;padding:2px 8px;word-break:break-all}
+.hosts{display:flex;flex-direction:column;gap:6px}
+.hostrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
+.flag{font-size:.78rem;color:var(--hi);font-weight:700}
+
+.rail{display:flex;flex-direction:column;gap:22px;position:relative}
+.when{display:grid;grid-template-columns:96px 1fr;gap:12px}
+.when-label{font-weight:700;font-size:.9rem;padding-top:12px;border-top:3px solid var(--line)}
+.when.now .when-label{border-color:var(--hi);color:var(--hi)}
+.when.today .when-label{border-color:var(--mid);color:var(--mid)}
+.when.week .when-label{border-color:var(--accent);color:var(--accent)}
+.when.ongoing .when-label{color:var(--muted)}
+.acts{display:flex;flex-direction:column;gap:8px;min-width:0}
+.act{display:flex;gap:12px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer}
+.act input{position:absolute;opacity:0;pointer-events:none}
+.box{flex:none;width:22px;height:22px;border:2px solid var(--muted);border-radius:6px;margin-top:2px;display:grid;place-items:center}
+.act input:checked+.box{background:var(--accent);border-color:var(--accent)}
+.act input:checked+.box::after{content:"";width:10px;height:6px;border-left:2.5px solid var(--accent-ink);border-bottom:2.5px solid var(--accent-ink);transform:translateY(-1px) rotate(-45deg)}
+.act-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.act-title{font-weight:700}
+.act-why{font-size:.88rem;color:var(--muted)}
+.act:has(input:checked) .act-title{text-decoration:line-through;color:var(--muted)}
+.why-tag{font-size:.75rem;color:var(--muted);font-family:var(--font-mono)}
+
+.contacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.contact{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:2px}
+.contact b{font-family:var(--font-mono);font-size:1.15rem;user-select:all}
+.contact span{font-size:.85rem;color:var(--muted)}
+footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+.empty{color:var(--muted);font-size:.92rem;background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:16px}
+@media (max-width:520px){.when{grid-template-columns:1fr;gap:6px}.when-label{padding-top:8px}h1{font-size:1.5rem}}
+@media (prefers-reduced-motion:no-preference){.act,.chip{transition:background .15s,border-color .15s}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <h1>漏えい通知チェッカー</h1>
+    <p class="lead">企業から届いた「個人情報流出のお知らせ」の本文を貼り付けると、漏れた情報の種類を読み取り、あなたがやるべきことを順番に並べます。</p>
+    <div class="privacy" role="note">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/><path d="m8.5 12 2.5 2.5 4.5-5" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>読み取りはすべてこの端末のブラウザ内で行います。貼り付けた文章はどこにも送信・保存されず、画面を閉じるか「消去」を押すと消えます。</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="s-in">
+    <h2 id="s-in"><span class="step">STEP 1</span>通知メールの本文を貼り付ける</h2>
+    <label for="mail" class="note" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">本文（件名から署名まで、まるごとでかまいません）<span id="sampleFlag" class="sample-flag">いま入っているのは架空のサンプルです</span></label>
+    <textarea id="mail" autocomplete="off" spellcheck="false" placeholder="ここに通知メールの本文を貼り付け"></textarea>
+    <div id="imgNotice" class="notice" hidden>画像はこの画面では読み取れません。下の「スクショしかない場合」の手順で文字をコピーしてから貼り付けてください。</div>
+    <div class="row">
+      <button id="run" class="primary" type="button">読み取る</button>
+      <button id="clear" type="button">消去</button>
+      <button id="sample" class="ghost" type="button">サンプルを入れる</button>
+    </div>
+    <details>
+      <summary>スクショしかない場合</summary>
+      <ul>
+        <li>iPhone：写真アプリで画像を開き、文字を長押しして選択 →「コピー」</li>
+        <li>Android：画像を開いて「Googleレンズ」→「テキスト」→「すべて選択」→ コピー</li>
+        <li>Windows 11：Snipping Tool の「テキストアクション」でコピー</li>
+        <li>Mac：プレビューで画像を開き、文字をドラッグで選択してコピー</li>
+      </ul>
+      <p class="note" style="margin-top:6px">どれも端末の中で文字を読み取る機能なので、画像を外部に送る必要はありません。</p>
+    </details>
+  </section>
+
+  <section aria-labelledby="s-items">
+    <h2 id="s-items"><span class="step">STEP 2</span>漏れた情報を確かめる</h2>
+    <p class="note">自動判定は文面のキーワードによる目安です。メールと見比べて、違っていたらタップで切り替えてください。</p>
+    <div id="verdict"></div>
+    <div id="chips" class="groups"></div>
+  </section>
+
+  <section aria-labelledby="s-phish">
+    <h2 id="s-phish"><span class="step">STEP 3</span>そのメールは本物か</h2>
+    <div id="phish"></div>
+  </section>
+
+  <section aria-labelledby="s-plan">
+    <h2 id="s-plan"><span class="step">STEP 4</span>やることリスト</h2>
+    <div class="row" style="justify-content:space-between">
+      <p class="note">チェックは記録されません。手元に残すならコピーしてメモに貼ってください。</p>
+      <button id="copy" type="button">リストをコピー</button>
+    </div>
+    <div id="plan" class="rail"></div>
+  </section>
+
+  <section aria-labelledby="s-help">
+    <h2 id="s-help">困ったときの相談先</h2>
+    <div class="contacts">
+      <div class="contact"><b>188</b><span>消費者ホットライン。請求や契約のトラブル</span></div>
+      <div class="contact"><b>#9110</b><span>警察相談専用電話。詐欺や不正利用の相談</span></div>
+      <div class="contact"><b>カード裏面の番号</b><span>カードの不正利用・停止・再発行</span></div>
+    </div>
+    <p class="note">フィッシングと思われるメールは、フィッシング対策協議会（antiphishing.jp）に報告できます。</p>
+  </section>
+
+  <footer>
+    <p>このページは文面のキーワードをもとに一般的な対応を示すものです。通知元の企業、カード会社、金融機関の案内がある場合はそちらを優先してください。</p>
+    <p>通信は行いません。外部に送るのは文字表示用のフォント読み込みだけで、本文は含まれません。</p>
+  </footer>
+</div>
+
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+
+const SAMPLE=`件名：【重要】当社サービスへの不正アクセスに関するお詫びとお知らせ
+
+山田 太郎 様
+
+平素より「サンプルマート」をご利用いただき、誠にありがとうございます。
+このたび、当社が運営する通販サイトのサーバーに対し第三者による不正アクセスがあり、お客様の個人情報が流出した可能性があることが判明いたしました。お客様には多大なるご迷惑とご心配をおかけしますことを、深くお詫び申し上げます。
+
+【流出した可能性のある情報】
+・氏名
+・メールアドレス
+・電話番号
+・ご登録住所
+・ログインパスワード（ハッシュ化済み）
+・クレジットカード番号の下4桁、有効期限
+
+【流出していない情報】
+・クレジットカード番号（全桁）
+・セキュリティコード
+
+お客様におかれましては、パスワードの変更をお願いいたします。
+
+■お問い合わせ窓口
+サンプルマート 個人情報お問い合わせ窓口
+メールアドレス：support@samplemart.example
+https://www.samplemart.example/news/2026/1001`;
+
+// level: hi = すぐ悪用されうる / mid = 詐欺の材料になる / lo = 単独では影響小
+const CATS=[
+ {id:'name',label:'氏名',g:'基本情報',lv:'mid',re:/氏名|お名前|名前|姓名|フリガナ|ふりがな|名義/},
+ {id:'email',label:'メールアドレス',g:'基本情報',lv:'mid',re:/メール\s*アドレス|e-?mail|Eメール|メアド/i},
+ {id:'phone',label:'電話番号',g:'基本情報',lv:'mid',re:/電話番号|携帯番号|TEL|連絡先番号/i},
+ {id:'address',label:'住所',g:'基本情報',lv:'mid',re:/住所|郵便番号|所在地/},
+ {id:'birth',label:'生年月日',g:'基本情報',lv:'mid',re:/生年月日|誕生日/},
+ {id:'gender',label:'性別',g:'基本情報',lv:'lo',re:/性別/},
+ {id:'loginid',label:'ログインID・会員番号',g:'ログイン',lv:'mid',re:/ログイン\s*ID|ユーザー?\s*ID|会員\s*ID|会員番号|アカウント名/i},
+ {id:'password',label:'パスワード・暗証番号',g:'ログイン',lv:'hi',re:/パスワード|password|暗証番号/i},
+ {id:'secret',label:'秘密の質問',g:'ログイン',lv:'mid',re:/秘密の質問/},
+ {id:'cardfull',label:'カード番号（全桁）',g:'お金',lv:'hi',re:/カード番号/},
+ {id:'cardlast4',label:'カード番号の下4桁',g:'お金',lv:'lo',re:/(下|末尾)\s*[4４四]\s*桁/},
+ {id:'cardexp',label:'カード有効期限',g:'お金',lv:'mid',re:/有効期限/},
+ {id:'cvv',label:'セキュリティコード',g:'お金',lv:'hi',re:/セキュリティ\s*コード|CVV|CVC/i},
+ {id:'cardunk',label:'カード情報（範囲不明）',g:'お金',lv:'hi',re:/クレジットカード情報|カード情報|決済情報|クレジットカードに関する情報/},
+ {id:'bank',label:'銀行口座',g:'お金',lv:'hi',re:/口座番号|銀行口座|口座情報/},
+ {id:'history',label:'購入・利用履歴',g:'お金',lv:'lo',re:/購入履歴|注文履歴|購入情報|注文情報|利用履歴|取引履歴|購入商品/},
+ {id:'mynumber',label:'マイナンバー',g:'公的書類',lv:'hi',re:/マイナンバー|個人番号/},
+ {id:'iddoc',label:'免許証などの本人確認書類',g:'公的書類',lv:'hi',re:/運転免許|免許証|本人確認書類|保険証|パスポート|旅券|在留カード/},
+];
+const GROUPS=['基本情報','ログイン','お金','公的書類'];
+
+const NEG=/((含まれ|流出|漏え?い|漏洩|保持|保有|保存|取得|確認され|該当|管理)[^。\n]{0,12}?(ません|ない|ず))|対象外/;
+const LEAKCTX=/流出|漏え?い|漏洩|不正アクセス|閲覧|窃取|盗|対象|可能性|含まれ|おそれ|恐れ|情報/;
+const CONTACT=/問い?合わ?せ|窓口|受付|フリーダイヤル|ダイヤル|コールセンター|サポートセンター/;
+const APOLOGY=/申し訳(ござい|あり)ません/g;
+const REQ=/お願い|ください|下さい|ます|変更|設定|確認/;
+const DATA=/@|https?:|\d{2,4}[-‐ー−]\d{2,4}[-‐ー−]\d{3,4}|0120|受付時間/;
+const BULLET=/^([・\-\*＊●○◆◇•▪※]|\d+[\.．\)）]|[（(]\d+[)）]|[①-⑳])\s*/;
+
+function detectIn(t){
+  const f=new Set();
+  for(const c of CATS) if(c.re.test(t)) f.add(c.id);
+  if(f.has('cardfull') && !/カード番号(?![^。\n、]{0,6}(下|末尾|一部|上\s*[6６]))/.test(t)) f.delete('cardfull');
+  return f;
+}
+
+function analyze(text){
+  const pos=new Set(), neg=new Set(); let hashed=false;
+  const scan=(s,forced)=>{
+    for(const cl of s.replace(APOLOGY,'').split(/。|が、|ただし|なお、|一方、/)){
+      const c=cl.trim(); if(!c) continue;
+      const ids=detectIn(c); if(!ids.size) continue;
+      if(/パスワード|暗証番号/.test(c)&&/ハッシュ|暗号化/.test(c)) hashed=true;
+      if(NEG.test(c)){ids.forEach(i=>neg.add(i));continue;}
+      if(forced==='pos'){ids.forEach(i=>pos.add(i));continue;}
+      if(forced==='neg'){ids.forEach(i=>neg.add(i));continue;}
+      if(CONTACT.test(c)) continue;
+      if(LEAKCTX.test(c)||(c.length<=24&&!REQ.test(c))) ids.forEach(i=>pos.add(i));
+    }
+  };
+  let state=null, count=0;
+  for(const raw of text.replace(/\r/g,'').split('\n')){
+    const t=raw.trim();
+    if(!t){ if(count>0&&state!=='ignore'){state=null;count=0;} continue; }
+    if(/^【/.test(t)||/^[■□▼▽]/.test(t)||/[:：]$/.test(t)){
+      let head=t, rest='';
+      const close=t.indexOf('】');
+      if(/^【/.test(t)&&close>0){head=t.slice(0,close+1);rest=t.slice(close+1);}
+      else{const ci=t.search(/[:：]/); if(ci>=0){head=t.slice(0,ci);rest=t.slice(ci+1);}}
+      state=CONTACT.test(head)?'ignore':NEG.test(head)?'neg':LEAKCTX.test(head)?'pos':null;
+      count=0;
+      if(rest.trim()&&state!=='ignore'&&!DATA.test(rest)) scan(rest,state);
+      continue;
+    }
+    if(state==='ignore'||DATA.test(t)) continue;
+    const body=t.replace(BULLET,'');
+    if(state==='pos'||state==='neg'){
+      count++;
+      if(state==='pos'&&REQ.test(body)&&!LEAKCTX.test(body)) scan(body,null); else scan(body,state);
+      continue;
+    }
+    scan(body,null);
+  }
+  pos.forEach(i=>neg.delete(i));
+  if(['cardfull','cardlast4','cardexp','cvv'].some(i=>pos.has(i))) pos.delete('cardunk');
+  return {pos,neg,hashed};
+}
+
+function phish(text){
+  const hosts=[], seen=new Set();
+  for(const m of text.matchAll(/https?:\/\/[^\s"'<>）)」、]+/gi)){
+    let h; try{h=new URL(m[0]).hostname.toLowerCase();}catch(e){continue;}
+    if(seen.has(h)) continue; seen.add(h);
+    const flags=[];
+    if(/^(bit\.ly|t\.co|tinyurl\.com|is\.gd|goo\.su|x\.gd|ow\.ly|buff\.ly|cutt\.ly|rebrand\.ly|t\.ly)$/.test(h)) flags.push('短縮URL：行き先が見えません');
+    if(h.includes('xn--')) flags.push('特殊文字を含むドメイン：見た目を似せた偽物に使われることがあります');
+    if(/^\d+\.\d+\.\d+\.\d+$/.test(h)) flags.push('数字だけのアドレス：正規の企業はまず使いません');
+    hosts.push({h,flags});
+  }
+  const sig=[];
+  if(/至急|ただちに|直ちに|\d+\s*時間以内|本日中|期限までに|アカウント[^。\n]{0,6}(停止|凍結|ロック|制限|削除)|利用(を)?停止/.test(text)) sig.push('急がせる表現があります。焦らせて確認させない手口によく使われます。');
+  if(/(カード番号|セキュリティコード|パスワード|暗証番号|口座番号|ログイン)[^。\n]{0,20}(入力|再登録|登録し直|ご回答|返信|お知らせください|ご確認ください)/.test(text)) sig.push('ログインや情報の入力を求めています。メール内のリンクからは行わず、自分でブックマークや公式アプリから開いてください。');
+  if(/手数料|振込|振り込み|ギフトカード|電子マネー|返金手続/.test(text)) sig.push('お金の支払いや返金手続きに触れています。漏えいのお詫びで支払いを求められることは通常ありません。');
+  return {hosts,sig};
+}
+
+function buildPlan(on,hashed){
+  const A=[], has=i=>on.has(i), any=(...ids)=>ids.some(has);
+  const add=(when,title,why)=>A.push({when,title,why});
+  if(!on.size) return A;
+  add('now','このメールが本物か、公式サイトで確かめる','漏えい通知を装った偽メールも出回っています。メール内のリンクは開かず、検索やブックマークから企業の公式サイトを開き、同じお知らせが出ているか見てください。');
+  add('now','通知メールを消さずに保存する','いつ・何が漏れたと知らされたかの記録になります。問い合わせや補償の手続きで必要になることがあります。');
+  if(any('password','loginid')){
+    add('now','このサービスのパスワードを変える', hashed?'ハッシュ化（復元しにくい形で保存）されていても、単純なパスワードは解読されるおそれがあります。':'漏れたパスワードはそのまま不正ログインに使われます。');
+    add('today','同じパスワードを使っている他のサービスも変える','漏れたIDとパスワードの組み合わせを、別のサイトで片っ端から試す攻撃があります。使い回しが一番の弱点です。');
+  }
+  if(has('secret')) add('today','秘密の質問の答えを変える','他のサービスで同じ答えを使っていれば、そちらも変えてください。');
+  if(any('cardfull','cvv','cardunk')){
+    add('now','カード会社に連絡し、停止や再発行を相談する', has('cardunk')?'どこまで漏れたか書かれていないので、カード裏面の番号に電話して、漏えいの通知を受けたことを伝えてください。':'番号やセキュリティコードが漏れると、ネットで不正に使われるおそれがあります。カード裏面の番号に電話してください。');
+    add('today','直近の利用明細を見て、身に覚えのない請求を探す','数百円程度の少額決済は、使えるか試すための不正利用のことがあります。');
+    add('week','カードの利用通知をオンにする','カード会社のアプリやWebで設定できることが多く、不正利用にすぐ気づけます。');
+  }else if(any('cardlast4','cardexp')){
+    add('week','次の利用明細で、身に覚えのない請求がないか見る','下4桁や有効期限だけではカードは使えないため、通常は再発行までは不要です。不安ならカード会社に相談してください。');
+    add('ongoing','カード番号の下4桁を言い当ててくる連絡を信用しない','本物らしく見せる材料として使われます。電話やSMSで「カードが不正利用されています」と言われても、こちらからカード裏面の番号にかけ直してください。');
+  }
+  if(has('bank')){
+    add('now','銀行に連絡し、取引の確認と対応を相談する','口座情報は振込詐欺や不正な引き落とし設定に使われるおそれがあります。');
+    add('today','入出金の明細を確認する','身に覚えのない引き落としや出金がないか見てください。');
+  }
+  if(has('birth')) add('today','生年月日を暗証番号やパスワードに使っていたら変える','銀行やカードの暗証番号が誕生日の数字になっていないか確認してください。');
+  if(has('email')&&!any('password','loginid')) add('week','このメールアドレスでログインしている大事なサービスに2段階認証を設定する','銀行、通販、SNSなど。アドレスが知られても、それだけでは入れないようにしておきます。');
+  if(any('password','loginid')) add('week','2段階認証を設定し、パスワード管理アプリの利用を考える','パスワードが漏れても、確認コードがなければログインされません。');
+  if(any('mynumber','iddoc')){
+    add('week','信用情報機関で、身に覚えのない契約がないか確かめる','CIC・JICC・全国銀行個人信用情報センターで、自分名義のローンやカード契約を開示請求できます。本人確認書類の悪用に気づく手がかりになります。');
+  }
+  if(has('mynumber')) add('week','住んでいる市区町村の窓口に相談する','不正に使われるおそれがあると認められれば、マイナンバーの変更を請求できます。');
+  if(has('email')) add('ongoing','偽メールが増える前提で受け取る','「お詫び」「返金」「本人確認」を名目にしたメールが届きやすくなります。差出人名が本物そっくりでも、リンクは開かないでください。');
+  if(has('phone')) add('ongoing','SMSと電話の詐欺に気をつける','SMSのリンクは開かず、折り返す場合は公式サイトに載っている番号にかけてください。');
+  if(has('address')) add('ongoing','覚えのない郵便物、代引き、請求書に気をつける','注文していない商品が届いても、支払う必要はありません。');
+  if(has('name')&&any('address','phone','birth')) add('ongoing','覚えのない契約や請求の連絡を放置しない','氏名と住所や電話番号がそろうと、なりすましの材料になります。おかしいと思ったら188に相談してください。');
+  if(has('history')) add('ongoing','購入内容に触れた連絡でも信用しない','「ご注文の〇〇について」と具体的に書かれていると本物に見えますが、漏れた履歴が使われている可能性があります。');
+  add('ongoing','その企業を名乗る連絡は、公式窓口にかけ直して確かめる','正規の企業が、電話やメールでパスワードやカード番号の全桁を聞くことは通常ありません。');
+  return A;
+}
+
+let state={on:new Set(),neg:new Set(),hashed:false,text:''};
+
+function renderChips(){
+  const box=$('#chips'); box.innerHTML='';
+  for(const g of GROUPS){
+    const wrap=document.createElement('div'); wrap.className='group';
+    wrap.innerHTML=`<h3>${g}</h3>`;
+    const row=document.createElement('div'); row.className='chips';
+    for(const c of CATS.filter(c=>c.g===g)){
+      const b=document.createElement('button'); b.type='button';
+      const on=state.on.has(c.id), ng=!on&&state.neg.has(c.id);
+      b.className=`chip lv-${c.lv}${ng?' neg':''}`;
+      b.setAttribute('aria-pressed',on);
+      b.innerHTML=`${c.label}${ng?' <span class="tag">（メールでは対象外）</span>':''}`;
+      b.onclick=()=>{state.on.has(c.id)?state.on.delete(c.id):state.on.add(c.id);renderAll(false);};
+      row.appendChild(b);
+    }
+    wrap.appendChild(row); box.appendChild(wrap);
+  }
+  const v=$('#verdict');
+  const lv=CATS.filter(c=>state.on.has(c.id)).map(c=>c.lv);
+  if(!state.on.size){v.innerHTML=`<div class="empty">漏れた情報が見つかりませんでした。本文を貼り付けて「読み取る」を押すか、下の項目をタップして選んでください。</div>`;return;}
+  const names=CATS.filter(c=>state.on.has(c.id)).map(c=>c.label).join('、');
+  if(lv.includes('hi')) v.innerHTML=`<div class="verdict hi"><strong>今日中に手を打つべき情報が含まれています</strong><span>${names}</span></div>`;
+  else if(lv.includes('mid')) v.innerHTML=`<div class="verdict mid"><strong>すぐの金銭被害は考えにくいものの、詐欺の材料になります</strong><span>${names}</span></div>`;
+  else v.innerHTML=`<div class="verdict lo"><strong>単独では影響の小さい情報です</strong><span>${names}</span></div>`;
+}
+
+function renderPhish(){
+  const box=$('#phish');
+  if(!state.text.trim()){box.innerHTML='<div class="empty">本文を読み取ると、リンク先や不審な表現をここに表示します。</div>';return;}
+  const {hosts,sig}=phish(state.text);
+  let h='<div class="phish">';
+  h+='<p>正規の漏えい通知でも、それを真似た偽メールが送られてきます。リンクは開かず、公式サイトを自分で開いて確認するのが基本です。</p>';
+  if(hosts.length){
+    h+='<div class="hosts"><p class="note">メール内のリンク先（開かずに、公式サイトのアドレスと一字ずつ見比べてください）</p>';
+    for(const x of hosts) h+=`<div class="hostrow"><span class="host">${esc(x.h)}</span>${x.flags.map(f=>`<span class="flag">${esc(f)}</span>`).join('')}</div>`;
+    h+='</div>';
+  }
+  if(sig.length) h+='<ul>'+sig.map(s=>`<li>${esc(s)}</li>`).join('')+'</ul>';
+  else h+='<p class="note">文面に目立つ不審点は見つかりませんでした。ただし、これは本物である保証にはなりません。</p>';
+  box.innerHTML=h+'</div>';
+}
+
+const WHEN={now:'いますぐ',today:'今日中に',week:'今週中に',ongoing:'これから\nしばらく'};
+let plan=[];
+function renderPlan(){
+  plan=buildPlan(state.on,state.hashed);
+  const box=$('#plan'); box.innerHTML='';
+  if(!plan.length){box.innerHTML='<div class="empty">漏れた情報を選ぶと、やることがここに並びます。</div>';return;}
+  let n=0;
+  for(const w of Object.keys(WHEN)){
+    const items=plan.filter(a=>a.when===w); if(!items.length) continue;
+    const sec=document.createElement('div'); sec.className=`when ${w}`;
+    sec.innerHTML=`<div class="when-label">${WHEN[w].replace('\n','<br>')}</div>`;
+    const acts=document.createElement('div'); acts.className='acts';
+    for(const a of items){
+      const id='act'+(n++);
+      const l=document.createElement('label'); l.className='act'; l.htmlFor=id;
+      l.innerHTML=`<input type="checkbox" id="${id}"><span class="box" aria-hidden="true"></span><span class="act-body"><span class="act-title">${esc(a.title)}</span><span class="act-why">${esc(a.why)}</span></span>`;
+      acts.appendChild(l);
+    }
+    sec.appendChild(acts); box.appendChild(sec);
+  }
+}
+
+function renderAll(reanalyze){
+  if(reanalyze){
+    state.text=$('#mail').value;
+    const r=analyze(state.text);
+    state.on=r.pos; state.neg=r.neg; state.hashed=r.hashed;
+  }
+  renderChips(); renderPhish(); renderPlan();
+}
+
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+const ta=$('#mail');
+let timer;
+ta.addEventListener('input',()=>{$('#sampleFlag').hidden=ta.value!==SAMPLE;$('#imgNotice').hidden=true;clearTimeout(timer);timer=setTimeout(()=>renderAll(true),500);});
+ta.addEventListener('paste',e=>{
+  const items=[...(e.clipboardData?.items||[])];
+  if(items.length&&items.every(i=>i.kind==='file')){e.preventDefault();$('#imgNotice').hidden=false;}
+});
+ta.addEventListener('drop',e=>{if(e.dataTransfer?.files?.length){e.preventDefault();$('#imgNotice').hidden=false;}});
+$('#run').onclick=()=>renderAll(true);
+$('#clear').onclick=()=>{ta.value='';state={on:new Set(),neg:new Set(),hashed:false,text:''};$('#sampleFlag').hidden=true;$('#imgNotice').hidden=true;renderAll(false);ta.focus();};
+$('#sample').onclick=()=>{ta.value=SAMPLE;$('#sampleFlag').hidden=false;renderAll(true);};
+$('#copy').onclick=async()=>{
+  const lines=[];
+  for(const w of Object.keys(WHEN)){const it=plan.filter(a=>a.when===w);if(!it.length)continue;lines.push(`■${WHEN[w].replace('\n','')}`);it.forEach(a=>lines.push(`□ ${a.title}`));lines.push('');}
+  const txt=lines.join('\n').trim(); const btn=$('#copy');
+  try{await navigator.clipboard.writeText(txt);btn.textContent='コピーしました';}
+  catch(e){ta.value=txt;ta.select();btn.textContent='本文欄に入れました（選択済み）';}
+  setTimeout(()=>btn.textContent='リストをコピー',2200);
+};
+
+ta.value=SAMPLE; renderAll(true);
+})();
+</script>
+</body>
+</html>
